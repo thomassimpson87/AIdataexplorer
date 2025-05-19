@@ -1,7 +1,9 @@
+# class1_ingest.py
 import os
 import pandas as pd
 from supabase import create_client
 from dotenv import load_dotenv
+from postgrest.exceptions import APIError
 
 load_dotenv()
 supabase = create_client(
@@ -36,7 +38,7 @@ def ingest_csv(csv_path: str):
     )
     df["rating"] = pd.to_numeric(df["rating"], errors="coerce").fillna(0.0)
 
-    # Clean rating_count: remove commas, coerce non-numeric to NaN, fill with 0, then int
+    # Clean rating_count: remove commas, coerce to numeric, fill NaN, then int
     df["rating_count"] = (
         pd.to_numeric(
             df["rating_count"].str.replace(",", "", regex=False),
@@ -46,15 +48,16 @@ def ingest_csv(csv_path: str):
         .astype(int)
     )
 
-    # Convert to records and insert in batches
     records = df.to_dict(orient="records")
     for i in range(0, len(records), 50):
         chunk = records[i : i + 50]
-        res = supabase.table("product_reviews").insert(chunk).execute()
-        if res.error:
-            print(f"Error inserting rows {i}–{i+len(chunk)-1}: {res.error}")
-        else:
-            print(f"nserted rows {i}–{i+len(chunk)-1}")
+        try:
+            supabase.table("product_reviews") \
+                     .upsert(chunk, on_conflict="product_id") \
+                     .execute()
+            print(f"✅ Upserted rows {i}–{i+len(chunk)-1}")
+        except APIError as e:
+            print(f"❌ Failed batch {i}–{i+len(chunk)-1}: {e}")
 
 if __name__ == "__main__":
     ingest_csv("data/amazon.csv")
